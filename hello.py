@@ -8,4 +8,4 @@ st.write("Welcome to your new web app, powered by Python and uv.")
 name = st.text_input("What is your name?")
 
 if name:
-    st.success(f"Hello {name}! Your environment is working perfectly.")
+    st.success(f"Hello {name}! Your environment is working perfectly. Try it now")
