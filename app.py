@@ -8,7 +8,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
-
+# New This is a Streamlit app that serves as an AI-powered portfolio monitor. It allows users to upload a CSV file containing their stock holdings, and then it fetches real-time market data, company profiles, and news for each stock using the yfinance library. The app provides an overview of the portfolio's performance, including total value, profit/loss, and 24-hour change. Users can also view detailed information and charts for each stock, as well as the latest news related to it. The app is designed with a dark theme and includes various visual elements to enhance the user experience.
 
 APP_TITLE = "WealthTrack: AI Portfolio Monitor"
 DEFAULT_CSV = Path("Stock Portfolio - Sheet1.csv")
