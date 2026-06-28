@@ -44,6 +44,20 @@ def _base_state(student_id: str, raw_input: str) -> dict:
         "override_notes": "",
         "audit_status": "",
         "formatted_html_letter": "",
+        "extraction_attempts": 0,
+        "quality_status": "",
+        "quality_issues": [],
+        "clarification_request": "",
+        "clarification_notes": "",
+        "pause_reason": "",
+        "compliance_summary": "",
+        "appeal_recommendation": "",
+        "appeal_rationale": "",
+        "appeal_review_count": 0,
+        "report_review_status": "",
+        "report_review_notes": [],
+        "revision_count": 0,
+        "agent_trace": [],
     }
 
 
@@ -54,19 +68,30 @@ def _checkpoint_values(config: dict) -> dict:
 
 def _run_until_action_needed(initial_state: dict, config: dict) -> dict:
     grantpulse_graph.invoke(initial_state, config=config)
-    state = _checkpoint_values(config)
-
-    if state.get("calculated_status") == "PASS":
-        grantpulse_graph.invoke(None, config=config)
-        state = _checkpoint_values(config)
-
-    return state
+    return _checkpoint_values(config)
 
 
 def _resume_with_notes(config: dict, notes: str) -> dict:
     grantpulse_graph.update_state(config, {"override_notes": notes})
     grantpulse_graph.invoke(None, config=config)
     return _checkpoint_values(config)
+
+
+def _resume_with_clarification(config: dict, notes: str) -> dict:
+    grantpulse_graph.update_state(config, {"clarification_notes": notes})
+    grantpulse_graph.invoke(None, config=config)
+    return _checkpoint_values(config)
+
+
+def _agent_trace(state: dict) -> None:
+    trace = state.get("agent_trace", [])
+    if not trace:
+        return
+
+    with st.expander("Agent loop trace", expanded=True):
+        for step in trace:
+            st.markdown(f"**{step.get('agent', 'agent')}** · `{step.get('event', '')}`")
+            st.caption(step.get("detail", ""))
 
 
 def _status_badge(audit_status: str) -> None:
@@ -120,12 +145,40 @@ def _violation_review_card(state: dict, config: dict) -> None:
         st.rerun()
 
 
+def _clarification_card(state: dict, config: dict) -> None:
+    st.warning("The data-quality agent needs clarification before the audit can continue.")
+    issues = state.get("quality_issues", [])
+    if issues:
+        st.markdown("**Quality issues**")
+        for issue in issues:
+            st.write(f"- {issue}")
+
+    clarification = st.text_area(
+        "Transcript Clarification",
+        height=160,
+        placeholder=(
+            state.get("clarification_request")
+            or "For each course, provide attempted credits, earned credits, and either total grade points "
+            "or course GPA. Example: BIO 101 attempted 4, earned 3, GPA 2.5."
+        ),
+    )
+
+    if st.button("Submit Clarification & Resume Extraction", type="primary", use_container_width=True):
+        st.session_state.audit_state = _resume_with_clarification(config, clarification.strip())
+        st.rerun()
+
+
 def _final_report(state: dict) -> None:
     audit_status = state.get("audit_status", "")
     if not audit_status:
         return
 
     _status_badge(audit_status)
+    if state.get("report_review_status"):
+        st.caption(
+            f"Report critic: {state.get('report_review_status')} "
+            f"after {state.get('revision_count', 0)} revision loop(s)."
+        )
     st.markdown(state.get("formatted_html_letter", ""), unsafe_allow_html=True)
 
 
@@ -157,24 +210,41 @@ if "thread_id" not in st.session_state:
     st.session_state.thread_id = _new_thread_id()
 if "audit_state" not in st.session_state:
     st.session_state.audit_state = {}
+if "audit_error" not in st.session_state:
+    st.session_state.audit_error = ""
 
 if execute:
     st.session_state.thread_id = _new_thread_id()
     config = _thread_config(st.session_state.thread_id)
-    st.session_state.audit_state = _run_until_action_needed(
-        _base_state(student_id.strip(), raw_input.strip()),
-        config,
-    )
+    st.session_state.audit_error = ""
+    st.session_state.audit_state = {}
+    try:
+        with st.spinner("Running GrantPulse agent workflow..."):
+            st.session_state.audit_state = _run_until_action_needed(
+                _base_state(student_id.strip(), raw_input.strip()),
+                config,
+            )
+    except Exception as exc:
+        st.session_state.audit_error = f"{type(exc).__name__}: {exc}"
     st.rerun()
 
 config = _thread_config(st.session_state.thread_id)
 state = st.session_state.audit_state
 
-if not state:
+if st.session_state.audit_error:
+    st.error("GrantPulse audit failed before producing a dashboard state.")
+    st.code(st.session_state.audit_error)
+elif not state:
     st.info("Enter a student record and execute an audit to begin.")
 elif state.get("audit_status"):
+    _agent_trace(state)
     _final_report(state)
-elif state.get("calculated_status") == "VIOLATION" and not state.get("override_notes"):
+elif state.get("pause_reason") == "clarification_required":
+    _agent_trace(state)
+    _clarification_card(state, config)
+elif state.get("pause_reason") in {"override_required", "override_notes_unclear"}:
+    _agent_trace(state)
     _violation_review_card(state, config)
 else:
+    _agent_trace(state)
     _final_report(state)
